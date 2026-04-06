@@ -23,6 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -34,10 +35,9 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define HMI_MODBUS_SLAVE_ID      1U
-#define HMI_MODBUS_START_ADDR    0U
-#define HMI_MODBUS_REG_COUNT     2U
 #define HMI_MODBUS_POLL_MS       1000U
 #define HMI_MODBUS_UART_HANDLE   (&huart4)
+#define HMI_MODBUS_COUNTER_ADDR  100U
 
 /* USER CODE END PD */
 
@@ -70,8 +70,8 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
-static uint16_t g_hmiHoldingRegs[HMI_MODBUS_REG_COUNT] = {0};
 static uint32_t g_hmiLastPollTick = 0U;
+static uint16_t g_hmiTxCounter = 0U;
 
 /* USER CODE END PV */
 
@@ -98,11 +98,10 @@ void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
 static uint16_t Modbus_CRC16(const uint8_t *data, uint16_t length);
-static HAL_StatusTypeDef HMI_ModbusReadHoldingRegisters(UART_HandleTypeDef *huart,
-                                                         uint8_t slaveId,
-                                                         uint16_t startAddr,
-                                                         uint16_t quantity,
-                                                         uint16_t *outRegs);
+static HAL_StatusTypeDef HMI_ModbusWriteSingleRegister(UART_HandleTypeDef *huart,
+                                                        uint8_t slaveId,
+                                                        uint16_t regAddr,
+                                                        uint16_t value);
 
 /* USER CODE END PFP */
 
@@ -134,30 +133,22 @@ static uint16_t Modbus_CRC16(const uint8_t *data, uint16_t length)
   return crc;
 }
 
-static HAL_StatusTypeDef HMI_ModbusReadHoldingRegisters(UART_HandleTypeDef *huart,
-                                                         uint8_t slaveId,
-                                                         uint16_t startAddr,
-                                                         uint16_t quantity,
-                                                         uint16_t *outRegs)
+static HAL_StatusTypeDef HMI_ModbusWriteSingleRegister(UART_HandleTypeDef *huart,
+                                                        uint8_t slaveId,
+                                                        uint16_t regAddr,
+                                                        uint16_t value)
 {
   uint8_t request[8];
-  uint8_t response[5U + (2U * HMI_MODBUS_REG_COUNT)];
+  uint8_t response[8];
   uint16_t crc;
-  uint16_t expectedLength;
-  uint16_t i;
   HAL_StatusTypeDef status;
 
-  if ((quantity == 0U) || (quantity > HMI_MODBUS_REG_COUNT))
-  {
-    return HAL_ERROR;
-  }
-
   request[0] = slaveId;
-  request[1] = 0x03U; /* Function Code: Read Holding Registers */
-  request[2] = (uint8_t)(startAddr >> 8);
-  request[3] = (uint8_t)(startAddr & 0x00FFU);
-  request[4] = (uint8_t)(quantity >> 8);
-  request[5] = (uint8_t)(quantity & 0x00FFU);
+  request[1] = 0x06U; /* Function Code: Write Single Register */
+  request[2] = (uint8_t)(regAddr >> 8);
+  request[3] = (uint8_t)(regAddr & 0x00FFU);
+  request[4] = (uint8_t)(value >> 8);
+  request[5] = (uint8_t)(value & 0x00FFU);
 
   crc = Modbus_CRC16(request, 6U);
   request[6] = (uint8_t)(crc & 0x00FFU);       /* CRC Low */
@@ -169,29 +160,22 @@ static HAL_StatusTypeDef HMI_ModbusReadHoldingRegisters(UART_HandleTypeDef *huar
     return status;
   }
 
-  expectedLength = (uint16_t)(5U + (2U * quantity));
-  status = HAL_UART_Receive(huart, response, expectedLength, 200U);
+  status = HAL_UART_Receive(huart, response, sizeof(response), 200U);
   if (status != HAL_OK)
   {
     return status;
   }
 
-  crc = Modbus_CRC16(response, (uint16_t)(expectedLength - 2U));
-  if ((response[expectedLength - 2U] != (uint8_t)(crc & 0x00FFU)) ||
-      (response[expectedLength - 1U] != (uint8_t)((crc >> 8) & 0x00FFU)))
+  crc = Modbus_CRC16(response, 6U);
+  if ((response[6] != (uint8_t)(crc & 0x00FFU)) ||
+      (response[7] != (uint8_t)((crc >> 8) & 0x00FFU)))
   {
     return HAL_ERROR;
   }
 
-  if ((response[0] != slaveId) || (response[1] != 0x03U) || (response[2] != (uint8_t)(2U * quantity)))
+  if (memcmp(request, response, 6U) != 0)
   {
     return HAL_ERROR;
-  }
-
-  for (i = 0U; i < quantity; i++)
-  {
-    outRegs[i] = (uint16_t)(((uint16_t)response[3U + (2U * i)] << 8) |
-                            response[4U + (2U * i)]);
   }
 
   return HAL_OK;
@@ -265,17 +249,16 @@ int main(void)
     {
       g_hmiLastPollTick = HAL_GetTick();
 
-      if (HMI_ModbusReadHoldingRegisters(HMI_MODBUS_UART_HANDLE,
-                                         HMI_MODBUS_SLAVE_ID,
-                                         HMI_MODBUS_START_ADDR,
-                                         HMI_MODBUS_REG_COUNT,
-                                         g_hmiHoldingRegs) == HAL_OK)
+      if (HMI_ModbusWriteSingleRegister(HMI_MODBUS_UART_HANDLE,
+                                        HMI_MODBUS_SLAVE_ID,
+                                        HMI_MODBUS_COUNTER_ADDR,
+                                        g_hmiTxCounter) == HAL_OK)
       {
-        /* g_hmiHoldingRegs[0], g_hmiHoldingRegs[1] 값 사용 */
+        g_hmiTxCounter++;
       }
       else
       {
-        /* 통신 실패 시 재시도 또는 에러 카운트 처리 */
+        /* 통신 실패 시 재시도 또는 에러 카운트 처리 (counter 값 유지) */
       }
     }
   }
