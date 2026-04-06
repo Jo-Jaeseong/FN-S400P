@@ -34,7 +34,7 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define HMI_MODBUS_SLAVE_ID      1U
+#define HMI_MODBUS_SLAVE_ID      0U
 #define HMI_MODBUS_POLL_MS       1000U
 #define HMI_MODBUS_UART_HANDLE   (&huart4)
 #define HMI_MODBUS_COUNTER_ADDR  100U
