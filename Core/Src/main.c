@@ -23,6 +23,7 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -33,6 +34,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define HMI_MODBUS_SLAVE_ID      0U
+#define HMI_MODBUS_POLL_MS       1000U
+#define HMI_MODBUS_UART_HANDLE   (&huart4)
+#define HMI_MODBUS_COUNTER_ADDR  100U
 
 /* USER CODE END PD */
 
@@ -65,6 +70,8 @@ UART_HandleTypeDef huart1;
 UART_HandleTypeDef huart3;
 
 /* USER CODE BEGIN PV */
+static uint32_t g_hmiLastPollTick = 0U;
+static uint16_t g_hmiTxCounter = 0U;
 
 /* USER CODE END PV */
 
@@ -90,11 +97,89 @@ static void MX_NVIC_Init(void);
 void MX_USB_HOST_Process(void);
 
 /* USER CODE BEGIN PFP */
+static uint16_t Modbus_CRC16(const uint8_t *data, uint16_t length);
+static HAL_StatusTypeDef HMI_ModbusWriteSingleRegister(UART_HandleTypeDef *huart,
+                                                        uint8_t slaveId,
+                                                        uint16_t regAddr,
+                                                        uint16_t value);
 
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static uint16_t Modbus_CRC16(const uint8_t *data, uint16_t length)
+{
+  uint16_t crc = 0xFFFFU;
+  uint16_t i;
+  uint8_t j;
+
+  for (i = 0U; i < length; i++)
+  {
+    crc ^= data[i];
+    for (j = 0U; j < 8U; j++)
+    {
+      if ((crc & 0x0001U) != 0U)
+      {
+        crc >>= 1U;
+        crc ^= 0xA001U;
+      }
+      else
+      {
+        crc >>= 1U;
+      }
+    }
+  }
+
+  return crc;
+}
+
+static HAL_StatusTypeDef HMI_ModbusWriteSingleRegister(UART_HandleTypeDef *huart,
+                                                        uint8_t slaveId,
+                                                        uint16_t regAddr,
+                                                        uint16_t value)
+{
+  uint8_t request[8];
+  uint8_t response[8];
+  uint16_t crc;
+  HAL_StatusTypeDef status;
+
+  request[0] = slaveId;
+  request[1] = 0x06U; /* Function Code: Write Single Register */
+  request[2] = (uint8_t)(regAddr >> 8);
+  request[3] = (uint8_t)(regAddr & 0x00FFU);
+  request[4] = (uint8_t)(value >> 8);
+  request[5] = (uint8_t)(value & 0x00FFU);
+
+  crc = Modbus_CRC16(request, 6U);
+  request[6] = (uint8_t)(crc & 0x00FFU);       /* CRC Low */
+  request[7] = (uint8_t)((crc >> 8) & 0x00FFU);/* CRC High */
+
+  status = HAL_UART_Transmit(huart, request, sizeof(request), 100U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+
+  status = HAL_UART_Receive(huart, response, sizeof(response), 200U);
+  if (status != HAL_OK)
+  {
+    return status;
+  }
+
+  crc = Modbus_CRC16(response, 6U);
+  if ((response[6] != (uint8_t)(crc & 0x00FFU)) ||
+      (response[7] != (uint8_t)((crc >> 8) & 0x00FFU)))
+  {
+    return HAL_ERROR;
+  }
+
+  if (memcmp(request, response, 6U) != 0)
+  {
+    return HAL_ERROR;
+  }
+
+  return HAL_OK;
+}
 
 /* USER CODE END 0 */
 
@@ -148,6 +233,7 @@ int main(void)
   /* Initialize interrupts */
   MX_NVIC_Init();
   /* USER CODE BEGIN 2 */
+  g_hmiLastPollTick = HAL_GetTick();
 
   /* USER CODE END 2 */
 
@@ -159,6 +245,22 @@ int main(void)
     MX_USB_HOST_Process();
 
     /* USER CODE BEGIN 3 */
+    if ((HAL_GetTick() - g_hmiLastPollTick) >= HMI_MODBUS_POLL_MS)
+    {
+      g_hmiLastPollTick = HAL_GetTick();
+
+      if (HMI_ModbusWriteSingleRegister(HMI_MODBUS_UART_HANDLE,
+                                        HMI_MODBUS_SLAVE_ID,
+                                        HMI_MODBUS_COUNTER_ADDR,
+                                        g_hmiTxCounter) == HAL_OK)
+      {
+        g_hmiTxCounter++;
+      }
+      else
+      {
+        /* 통신 실패 시 재시도 또는 에러 카운트 처리 (counter 값 유지) */
+      }
+    }
   }
   /* USER CODE END 3 */
 }
