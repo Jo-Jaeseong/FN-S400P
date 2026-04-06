@@ -23,7 +23,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
 
 /* USER CODE END Includes */
 
@@ -38,6 +37,7 @@
 #define HMI_MODBUS_START_ADDR    0U
 #define HMI_MODBUS_REG_COUNT     2U
 #define HMI_MODBUS_POLL_MS       1000U
+#define HMI_MODBUS_UART_HANDLE   (&huart4)
 
 /* USER CODE END PD */
 
@@ -265,7 +265,7 @@ int main(void)
     {
       g_hmiLastPollTick = HAL_GetTick();
 
-      if (HMI_ModbusReadHoldingRegisters(&huart3,
+      if (HMI_ModbusReadHoldingRegisters(HMI_MODBUS_UART_HANDLE,
                                          HMI_MODBUS_SLAVE_ID,
                                          HMI_MODBUS_START_ADDR,
                                          HMI_MODBUS_REG_COUNT,
@@ -935,7 +935,7 @@ static void MX_UART4_Init(void)
 
   /* USER CODE END UART4_Init 1 */
   huart4.Instance = UART4;
-  huart4.Init.BaudRate = 115200;
+  huart4.Init.BaudRate = 9600;
   huart4.Init.WordLength = UART_WORDLENGTH_8B;
   huart4.Init.StopBits = UART_STOPBITS_1;
   huart4.Init.Parity = UART_PARITY_NONE;
